@@ -198,6 +198,32 @@ def job_stream(job_id: str):
     return StreamingResponse(event_gen(), media_type='text/event-stream',
                              headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
 
+
+DB_UPLOAD_TOKEN = "2XMyOw9wpnjDMnFEFBaIzx-boRndXyr78dZ330b3NQM"
+
+@app.post('/api/admin/restore-db')
+async def restore_db(request: Request, token: str = ""):
+    """Загружает готовую data.db (только с токеном)."""
+    if token != DB_UPLOAD_TOKEN:
+        raise HTTPException(403, "Forbidden")
+    body = await request.body()
+    if len(body) < 1024:
+        raise HTTPException(400, "File too small")
+    import tempfile, shutil
+    tmp = Path(DB_PATH).parent / "data_tmp.db"
+    tmp.write_bytes(body)
+    # Проверяем что это валидная sqlite
+    try:
+        import sqlite3
+        con = sqlite3.connect(str(tmp))
+        count = con.execute("SELECT COUNT(*) FROM lines").fetchone()[0]
+        con.close()
+    except Exception as e:
+        tmp.unlink(missing_ok=True)
+        raise HTTPException(400, f"Invalid DB: {e}")
+    shutil.move(str(tmp), str(DB_PATH))
+    return {"status": "ok", "rows": count}
+
 # ─── Статика (фронтенд) ──────────────────────────────────────────────────────
 if FRONT_DIR.exists():
     app.mount('/', StaticFiles(directory=str(FRONT_DIR), html=True), name='frontend')
