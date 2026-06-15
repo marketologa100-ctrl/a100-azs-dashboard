@@ -20,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from ingest_core import convert_to_xlsx, ingest_to_db, _ensure_schema
+from ingest_core import ingest_to_db, _ensure_schema
 import queries as Q
 
 # ─── Пути ────────────────────────────────────────────────────────────────────
@@ -154,14 +154,8 @@ async def _process_file(job_id: str, save_path: Path, orig_name: str):
     try:
         _jobs[job_id].update({'status': 'running', 'pct': 2, 'msg': 'Запуск...'})
 
-        # Конвертация если .xls
-        if save_path.suffix.lower() == '.xls':
-            progress(5, 'Конвертирую .xls → .xlsx (LibreOffice)...')
-            xlsx_path = await asyncio.get_event_loop().run_in_executor(
-                None, convert_to_xlsx, save_path, TMP_DIR
-            )
-        else:
-            xlsx_path = save_path
+        # .xls читается напрямую через xlrd, конвертация не нужна
+        xlsx_path = save_path
 
         # Ingest
         result = await asyncio.get_event_loop().run_in_executor(
