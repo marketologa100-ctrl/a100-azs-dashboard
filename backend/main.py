@@ -182,12 +182,17 @@ def job_stream(job_id: str):
         raise HTTPException(404, 'Job not found')
 
     def event_gen():
+        last_ping = time.time()
         while True:
             job = _jobs.get(job_id, {})
             data = json.dumps(job)
             yield f'data: {data}\n\n'
             if job.get('status') in ('done', 'error'):
                 break
+            # Keepalive comment каждые 15 сек чтобы Render не закрыл соединение
+            if time.time() - last_ping > 15:
+                yield ': keepalive\n\n'
+                last_ping = time.time()
             time.sleep(0.5)
 
     return StreamingResponse(event_gen(), media_type='text/event-stream',

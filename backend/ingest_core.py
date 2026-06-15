@@ -69,25 +69,44 @@ def convert_to_xlsx(xls_path: Path, tmpdir: Path) -> Path:
     return out
 
 def read_xlsx(filepath: Path) -> pd.DataFrame:
-    # Выбираем движок по расширению
     ext = Path(filepath).suffix.lower()
+
+    # Быстрый путь для xlsx — python-calamine (Rust, ~8x быстрее openpyxl)
+    if ext in ('.xlsx', '.xlsm'):
+        try:
+            from python_calamine import CalamineWorkbook
+            wb = CalamineWorkbook.from_path(str(filepath))
+            sheets = [s for s in wb.sheet_names if s.startswith('Page')] or wb.sheet_names
+            col_indices = sorted(COL_IDX.keys())
+            max_col = max(col_indices)
+            all_dfs = []
+            for sname in sheets:
+                rows = wb.get_sheet_by_name(sname).to_python(skip_empty_area=False)
+                if len(rows) <= 4:
+                    continue
+                data = []
+                for row in rows[4:]:
+                    r = list(row) + [None] * (max_col + 1)
+                    data.append([str(r[i]) if r[i] is not None else '' for i in col_indices])
+                df = pd.DataFrame(data, columns=[COL_IDX[c] for c in col_indices])
+                mask = ~df['azs_raw'].str.contains(SKIP_PATTERN, na=True)
+                all_dfs.append(df[mask])
+            return pd.concat(all_dfs, ignore_index=True) if all_dfs else pd.DataFrame()
+        except Exception:
+            pass  # fallback на openpyxl ниже
+
+    # Fallback: pandas
     engine = 'xlrd' if ext == '.xls' else 'openpyxl'
     xl = pd.ExcelFile(str(filepath), engine=engine)
-    sheets = [s for s in xl.sheet_names if s.startswith('Page')]
-    if not sheets:
-        sheets = xl.sheet_names
-
+    sheets = [s for s in xl.sheet_names if s.startswith('Page')] or xl.sheet_names
     all_dfs = []
     for sname in sheets:
-        df = pd.read_excel(
-            filepath, sheet_name=sname, header=None,
-            engine='openpyxl', skiprows=4,
-            usecols=list(COL_IDX.keys()), dtype=str
-        )
+        df = pd.read_excel(filepath, sheet_name=sname, header=None,
+                           engine=engine, skiprows=4,
+                           usecols=list(COL_IDX.keys()), dtype=str)
         df.columns = [COL_IDX[c] for c in sorted(COL_IDX.keys())]
         mask = ~df['azs_raw'].str.contains(SKIP_PATTERN, na=True)
         all_dfs.append(df[mask])
-
     return pd.concat(all_dfs, ignore_index=True)
 
 def normalize(df: pd.DataFrame, source_file: str) -> tuple[pd.DataFrame, list[str]]:
