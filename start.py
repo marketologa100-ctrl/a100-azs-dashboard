@@ -4,6 +4,9 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'backend'))
 
+from init_db import init_db
+init_db()
+
 import uvicorn
 
 port = int(os.environ.get('PORT', 8000))
