@@ -2,7 +2,7 @@ services:
   - type: web
     name: a100-azs-dashboard
     runtime: python
-    buildCommand: pip install -r requirements.txt
+    buildCommand: git lfs pull && pip install -r requirements.txt
     startCommand: python start.py
     envVars:
       - key: PORT
