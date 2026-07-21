@@ -198,8 +198,8 @@ def q_receipt_flags(con, d1, d2, azs=None):
         GROUP BY receipt_id
     """, p)
 
-def q_cross_sell(con, d1, d2, azs=None):
-    flags = q_receipt_flags(con, d1, d2, azs=azs)
+def q_cross_sell(con, d1, d2, azs=None, _flags=None):
+    flags = _flags if _flags is not None else q_receipt_flags(con, d1, d2, azs=azs)
     combos = {}
     for r in flags:
         cats = []
@@ -222,8 +222,8 @@ def q_cross_sell(con, d1, d2, azs=None):
         r['avg_receipt'] = r['total_net'] / max(r['n_receipts'], 1)
     return result
 
-def q_cross_sell_conversion(con, d1, d2, azs=None):
-    flags = q_receipt_flags(con, d1, d2, azs=azs)
+def q_cross_sell_conversion(con, d1, d2, azs=None, _flags=None):
+    flags = _flags if _flags is not None else q_receipt_flags(con, d1, d2, azs=azs)
     fuel_only = [r for r in flags if r['has_fuel']]
     total = len(fuel_only)
     if not total:
@@ -237,8 +237,8 @@ def q_cross_sell_conversion(con, d1, d2, azs=None):
         'pct_ff': with_ff/total*100, 'pct_mm': with_mm/total*100, 'pct_service': with_svc/total*100,
     }
 
-def q_cross_by_day(con, d1, d2, azs=None):
-    flags = q_receipt_flags(con, d1, d2, azs=azs)
+def q_cross_by_day(con, d1, d2, azs=None, _flags=None):
+    flags = _flags if _flags is not None else q_receipt_flags(con, d1, d2, azs=azs)
     by_day = {}
     for r in flags:
         cats = []
@@ -254,8 +254,8 @@ def q_cross_by_day(con, d1, d2, azs=None):
         by_day[key]['total_net']  += r['total_net'] or 0
     return sorted(by_day.values(), key=lambda x: (x['date_str'], x['combo']))
 
-def q_azs_cross(con, d1, d2, azs=None):
-    flags = q_receipt_flags(con, d1, d2, azs=azs)
+def q_azs_cross(con, d1, d2, azs=None, _flags=None):
+    flags = _flags if _flags is not None else q_receipt_flags(con, d1, d2, azs=azs)
     azs_data = {}
     for r in flags:
         a = r['azs_num']
@@ -354,8 +354,8 @@ def q_heatmap_all(con, d1, d2, azs=None):
     """, p)
 
 # ─── Combo segment ───────────────────────────────────────────────────────────
-def q_combo_segment(con, d1, d2, azs=None):
-    flags = q_receipt_flags(con, d1, d2, azs=azs)
+def q_combo_segment(con, d1, d2, azs=None, _flags=None):
+    flags = _flags if _flags is not None else q_receipt_flags(con, d1, d2, azs=azs)
     segs = {}
     for r in flags:
         is_loy = bool(r['has_loyalty'])
@@ -429,6 +429,8 @@ def q_azs_daily_trend(con, d1, d2, azs=None):
 # ─── Полная агрегация (один вызов) ───────────────────────────────────────────
 def q_all(con, d1: str, d2: str, azs: Optional[list] = None) -> dict:
     """Возвращает все агрегаты за диапазон d1..d2, опционально фильтруя по АЗС."""
+    # q_receipt_flags вычисляем один раз и передаём всем 5 функциям (cross + combo)
+    flags = q_receipt_flags(con, d1, d2, azs=azs)
     return {
         'overall_kpi':       q_overall_kpi(con, d1, d2, azs),
         'by_category':       q_by_category(con, d1, d2, azs),
@@ -444,10 +446,10 @@ def q_all(con, d1: str, d2: str, azs: Optional[list] = None) -> dict:
         'loyalty_fuel':      q_loyalty_fuel(con, d1, d2, azs),
         'loyalty_by_azs':    q_loyalty_by_azs(con, d1, d2, azs),
         'arpu':              q_arpu(con, d1, d2, azs),
-        'cross_combos':      q_cross_sell(con, d1, d2, azs),
-        'cross_conversion':  q_cross_sell_conversion(con, d1, d2, azs),
-        'cross_by_day':      q_cross_by_day(con, d1, d2, azs),
-        'azs_cross':         q_azs_cross(con, d1, d2, azs),
+        'cross_combos':      q_cross_sell(con, d1, d2, azs, _flags=flags),
+        'cross_conversion':  q_cross_sell_conversion(con, d1, d2, azs, _flags=flags),
+        'cross_by_day':      q_cross_by_day(con, d1, d2, azs, _flags=flags),
+        'azs_cross':         q_azs_cross(con, d1, d2, azs, _flags=flags),
         'discounts_kpi':     q_discounts_kpi(con, d1, d2, azs),
         'discounts_cat':     q_discounts_by_category(con, d1, d2, azs),
         'discounts_pay':     q_discounts_by_payment(con, d1, d2, azs),
@@ -457,7 +459,7 @@ def q_all(con, d1: str, d2: str, azs: Optional[list] = None) -> dict:
         'abc_ff':            q_abc(con, d1, d2, 'ff', azs),
         'heatmap_fuel':      q_heatmap_fuel(con, d1, d2, azs),
         'heatmap_all':       q_heatmap_all(con, d1, d2, azs),
-        'combo_segment':     q_combo_segment(con, d1, d2, azs),
+        'combo_segment':     q_combo_segment(con, d1, d2, azs, _flags=flags),
         'azs_rating':        q_azs_rating(con, d1, d2, azs),
         'azs_daily_trend':   q_azs_daily_trend(con, d1, d2, azs),
     }

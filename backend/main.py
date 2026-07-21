@@ -43,6 +43,10 @@ TMP_DIR.mkdir(exist_ok=True)
 # ─── Jobs store (in-memory) ──────────────────────────────────────────────────
 _jobs: dict[str, dict] = {}
 
+# Кэш для aggregates: {cache_key: (timestamp, data)}
+_agg_cache: dict = {}
+_AGG_CACHE_TTL = 300  # 5 минут
+
 # ─── App ─────────────────────────────────────────────────────────────────────
 app = FastAPI(title='AZS Dashboard API')
 
@@ -55,12 +59,11 @@ app.add_middleware(
 
 def get_con():
     con = sqlite3.connect(str(DB_PATH), timeout=30)
-    con.row_factory = sqlite3.Row
+    # row_factory не нужна — queries.fetchall сам делает dict(zip(cols, row))
     # Оптимизация памяти для Render (512 МБ RAM)
-    con.execute('PRAGMA cache_size = -8000')   # 8 МБ кэш
-    con.execute('PRAGMA temp_store = MEMORY')
+    con.execute('PRAGMA cache_size = -4000')   # 4 МБ кэш
+    con.execute('PRAGMA temp_store = FILE')    # temp в файл а не в RAM
     con.execute('PRAGMA mmap_size = 0')        # отключаем mmap
-    con.execute('PRAGMA journal_mode = WAL')
     return con
 
 # Схема уже создана через init_db() в start.py — здесь ничего не делаем
@@ -76,6 +79,38 @@ def sanitize(obj):
     if isinstance(obj, list):
         return [sanitize(v) for v in obj]
     return safe(obj)
+
+
+# ─── Старт: прогрев кэша ─────────────────────────────────────────────────────
+@app.on_event('startup')
+async def warm_cache():
+    """При старте вычисляем aggregates в фоне чтобы первый запрос ответил быстро."""
+    async def _warm():
+        try:
+            con = get_con()
+            rows = Q.q_manifest(con)
+            con.close()
+            if not rows:
+                return
+            d1 = rows[0].get('min_date', '')
+            d2 = rows[-1].get('max_date', '')
+            if not d1 or not d2:
+                return
+            loop = asyncio.get_event_loop()
+            def _run():
+                c = get_con()
+                try:
+                    data = sanitize(Q.q_all(c, d1, d2))
+                    result = {"main": data, "range": {"d1": d1, "d2": d2}}
+                    cache_key = (d1, d2, '', '', '')
+                    _agg_cache[cache_key] = (time.time(), result)
+                    print(f"Cache warmed: {d1}..{d2}", flush=True)
+                finally:
+                    c.close()
+            await loop.run_in_executor(None, _run)
+        except Exception as e:
+            print(f"Cache warm failed: {e}", flush=True)
+    asyncio.create_task(_warm())
 
 # ─── Эндпоинты ───────────────────────────────────────────────────────────────
 
@@ -110,11 +145,19 @@ def aggregates(d1: str, d2: str, c1: Optional[str] = None, c2: Optional[str] = N
     c1, c2 — диапазон сравнения (опционально).
     azs    — фильтр по АЗС: '1,5,12' (опционально, все АЗС если не задан).
     """
-    import traceback as tb
     if not d1 or not d2:
         raise HTTPException(400, 'Укажите d1 и d2')
-    # Парсим список АЗС
     azs_filter = [a.strip() for a in azs.split(',') if a.strip()] if azs else None
+    azs_key = ','.join(sorted(azs_filter)) if azs_filter else ''
+    cache_key = (d1, d2, c1 or '', c2 or '', azs_key)
+
+    # Ищём в кэше
+    now = time.time()
+    if cache_key in _agg_cache:
+        ts, cached = _agg_cache[cache_key]
+        if now - ts < _AGG_CACHE_TTL:
+            return cached
+
     con = get_con()
     try:
         main_data = sanitize(Q.q_all(con, d1, d2, azs=azs_filter))
@@ -123,12 +166,12 @@ def aggregates(d1: str, d2: str, c1: Optional[str] = None, c2: Optional[str] = N
             cmp_data = sanitize(Q.q_all(con, c1, c2, azs=azs_filter))
             result['compare'] = cmp_data
             result['compare_range'] = {'d1': c1, 'd2': c2}
+        # Сохраняем в кэш
+        _agg_cache[cache_key] = (now, result)
+        # Очищаем устаревшие записи
+        expired = [k for k, (t, _) in _agg_cache.items() if now - t >= _AGG_CACHE_TTL]
+        for k in expired: del _agg_cache[k]
         return result
-    except Exception as e:
-        err = tb.format_exc()
-        print('AGGREGATES ERROR:', err, flush=True)
-        raise HTTPException(500, detail=f'Ошибка: {str(e)}\n{err[-1000:]}')
-    # Note: original try/finally below still closes con
     finally:
         con.close()
 
