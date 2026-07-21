@@ -110,6 +110,7 @@ def aggregates(d1: str, d2: str, c1: Optional[str] = None, c2: Optional[str] = N
     c1, c2 — диапазон сравнения (опционально).
     azs    — фильтр по АЗС: '1,5,12' (опционально, все АЗС если не задан).
     """
+    import traceback as tb
     if not d1 or not d2:
         raise HTTPException(400, 'Укажите d1 и d2')
     # Парсим список АЗС
@@ -123,6 +124,11 @@ def aggregates(d1: str, d2: str, c1: Optional[str] = None, c2: Optional[str] = N
             result['compare'] = cmp_data
             result['compare_range'] = {'d1': c1, 'd2': c2}
         return result
+    except Exception as e:
+        err = tb.format_exc()
+        print('AGGREGATES ERROR:', err, flush=True)
+        raise HTTPException(500, detail=f'Ошибка: {str(e)}\n{err[-1000:]}')
+    # Note: original try/finally below still closes con
     finally:
         con.close()
 
