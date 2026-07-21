@@ -20,7 +20,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from ingest_core import ingest_to_db, _ensure_schema
+# ingest_core и pandas загружаются лениво при первой загрузке файла
+# чтобы не занимать ~150 МБ RAM при холодном старте
+def _get_ingest():
+    from ingest_core import ingest_to_db
+    return ingest_to_db
+
+def _get_ensure_schema():
+    from ingest_core import _ensure_schema
+    return _ensure_schema
 import queries as Q
 
 # ─── Пути ────────────────────────────────────────────────────────────────────
@@ -55,15 +63,7 @@ def get_con():
     con.execute('PRAGMA journal_mode = WAL')
     return con
 
-# Инициализируем схему один раз при старте приложения
-def _init_schema_once():
-    con = sqlite3.connect(str(DB_PATH), timeout=30)
-    try:
-        _ensure_schema(con)
-    finally:
-        con.close()
-
-_init_schema_once()
+# Схема уже создана через init_db() в start.py — здесь ничего не делаем
 
 def safe(v):
     if v is None: return None
@@ -172,8 +172,9 @@ async def _process_file(job_id: str, save_path: Path, orig_name: str):
         xlsx_path = save_path
 
         # Ingest
+        _ingest = _get_ingest()
         result = await asyncio.get_event_loop().run_in_executor(
-            None, lambda: ingest_to_db(xlsx_path, orig_name, DB_PATH, progress)
+            None, lambda: _ingest(xlsx_path, orig_name, DB_PATH, progress)
         )
         _jobs[job_id].update({
             'status': 'done', 'pct': 100,
