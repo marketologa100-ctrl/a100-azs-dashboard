@@ -48,8 +48,22 @@ app.add_middleware(
 def get_con():
     con = sqlite3.connect(str(DB_PATH), timeout=30)
     con.row_factory = sqlite3.Row
-    _ensure_schema(con)
+    # Оптимизация памяти для Render (512 МБ RAM)
+    con.execute('PRAGMA cache_size = -8000')   # 8 МБ кэш
+    con.execute('PRAGMA temp_store = MEMORY')
+    con.execute('PRAGMA mmap_size = 0')        # отключаем mmap
+    con.execute('PRAGMA journal_mode = WAL')
     return con
+
+# Инициализируем схему один раз при старте приложения
+def _init_schema_once():
+    con = sqlite3.connect(str(DB_PATH), timeout=30)
+    try:
+        _ensure_schema(con)
+    finally:
+        con.close()
+
+_init_schema_once()
 
 def safe(v):
     if v is None: return None
